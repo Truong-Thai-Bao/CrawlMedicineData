@@ -49,12 +49,13 @@ namespace CrawlMedicineData
             {
                 connection.Open();
                 //Tạo câu lệnh sql
-                string sql = "INSERT INTO Medicine (MedicineName, Price, Type) VALUES (@name, @price, @type)";
+                string sql = "INSERT INTO Medicine (MedicineName, Price, Type,AddedDate) VALUES (@name, @price, @type,@addedDate)";
                 using (SqlCommand command = new SqlCommand(sql, connection))
                 {
                     command.Parameters.AddWithValue("@name", name);
                     command.Parameters.AddWithValue("@price", price);
                     command.Parameters.AddWithValue("@type", type);
+                    command.Parameters.AddWithValue("@addedDate", DateTime.Now);
                     command.ExecuteNonQuery();
                 }
                 connection.Close();
@@ -66,39 +67,48 @@ namespace CrawlMedicineData
             driver.Navigate().GoToUrl("https://nhathuoclongchau.com.vn/thuoc");
             Thread.Sleep(3000);
 
-            for(int i = 1; i <= 18; i++)
+            for (int i = 1; i <= 18; i++)
             {
-                //Tìm kiếm thuốc theo từng loại
-                element = driver.FindElement(By.CssSelector($"#__next > div.omd\\:min-w-container-content.lg\\:w-full.flex.flex-col.min-h-screen > div.bg-layer-gray.pb-9.flex-1.relative > div:nth-child(3) > div > div.mt-6.container-lite > div > a:nth-child({i})"));
-                element.Click();
+                // Mở từng loại thuốc
+                IWebElement categoryElement = driver.FindElement(By.CssSelector(
+                    $@"#__next > div.omd\:min-w-container-content.lg\:w-full.flex.flex-col.min-h-screen > div.bg-layer-gray.pb-9.flex-1.relative > div:nth-child(3) > div > div.mt-6.container-lite > div > a:nth-child({i})"));
+
+                ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].removeAttribute('target');", categoryElement);
+                categoryElement.Click();
                 Thread.Sleep(3000);
 
-                //Lấy danh sách thuốc
+                // Lấy danh sách thuốc
                 IReadOnlyCollection<IWebElement> medicines = driver.FindElements(By.CssSelector("div.flex.min-w-0.flex-1.flex-col.justify-between.pb-3"));
 
-                //Duyệt qua từng thuốc
                 foreach (IWebElement medicine in medicines)
                 {
                     try
                     {
-                        //Bỏ qua các sản phẩm không thể mua tự do 
-                        var cancels = medicine.FindElements(By.XPath("//div[text()='Cần tư vấn từ dược sĩ']"));
-                        //Bỏ qua các sản phẩm không có hàng
-                        var cancels2 = medicine.FindElements(By.XPath("//div[text()='Tạm hết hàng']"));
-                        if (cancels.Count > 0||cancels2.Count>0)
+                        IReadOnlyCollection<IWebElement> canceledByPharmacist = medicine.FindElements(By.XPath("//div[text()='Cần tư vấn từ dược sĩ']"));
+                        IReadOnlyCollection<IWebElement> outOfStock = medicine.FindElements(By.XPath("//div[text()='Tạm hết hàng']"));
+                        if (canceledByPharmacist.Count > 0 || outOfStock.Count > 0) continue;
+
+                        IWebElement medicineName = medicine.FindElement(By.TagName("h3"));
+                        IReadOnlyCollection<IWebElement> typeDivs = medicine.FindElements(By.CssSelector("div.mb-1.flex.rounded-md.bg-gray-1.md\\:mb-2"));
+                        if (typeDivs.Count == 0) continue;
+
+                        IWebElement firstDiv = typeDivs.First();
+                        IReadOnlyCollection<IWebElement> innerDivs = firstDiv.FindElements(By.CssSelector("div.flex-1"));
+
+                        if (innerDivs.Count > 0)
                         {
-                            continue;   
+                            IWebElement lastDiv = innerDivs.Last();
+                            IWebElement button = lastDiv.FindElement(By.TagName("button"));
+                            button.Click();
+                            Thread.Sleep(300);
                         }
 
-                        //Lấy tên thuốc
-                        IWebElement medicineName = medicine.FindElement(By.TagName("h3"));
-                        //Lấy giá thuốc
                         IWebElement medicinePrice = medicine.FindElement(By.CssSelector("span.font-semibold"));
-                        //Lấy loại thuốc
                         IWebElement medicineType = medicine.FindElement(By.CssSelector("span.text-label2"));
 
                         string priceText = medicinePrice.Text.Replace("đ", "").Replace(".", "").Trim();
-                        // Dùng TryParse để tránh lỗi format
+
+                        //Dùng TryParse để tránh lỗi format
                         if (int.TryParse(priceText, out int price))
                         {
                             SaveToDB(
@@ -112,9 +122,11 @@ namespace CrawlMedicineData
                             Debug.WriteLine($"Lỗi parse giá: {medicinePrice.Text}");
                         }
 
-                        Debug.WriteLine($"Name: {medicineName.Text.Trim()}\n" +
+                        Debug.WriteLine(
+                            $"Name: {medicineName.Text.Trim()}\n" +
                             $"Price: {medicinePrice.Text.Trim()}\n" +
-                            $"Type: {medicineType.Text.Trim().Substring(1)}\n");
+                            $"Type: {medicineType.Text.Trim().Substring(1)}\n"
+                        );
                     }
                     catch (Exception ex)
                     {
@@ -125,8 +137,9 @@ namespace CrawlMedicineData
                 driver.Navigate().Back();
                 Thread.Sleep(3000);
             }
-
         }
+
+
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
